@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "msg": "Hi",
+    "time": "2026-04-01T16:00:08.801496"
+  },
+  {
+    "role": "ai",
+    "msg": "\u274c Fehler: Expecting value: line 1 column 1 (char 0)",
+    "time": "2026-04-01T16:00:08.801523"
+  }
+]

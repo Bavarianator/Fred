@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+*.db
+fred.db
+fred_memory.db
+config.json
+fred_config.json
+*.log
+logs/
+skills/
