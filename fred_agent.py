@@ -1,24 +1,62 @@
+"""
+FRED AGENT v3.0 - Autonomer System-Agent
+IDENTITÄT: Kein Chatbot. Ein autonomer System-Agent mit direktem Zugriff auf OS, Netzwerk, Dateisystem, Code-Runtime und externe APIs.
+Denkt proaktiv, nicht reaktiv.
+
+AUTONOMIE-GRUNDSATZ:
+Der User gibt ZIELE, nicht Klicks. Wenn der User sagt "suche nach...", "installiere...", "öffne...", "baue...", 
+dann FÜHRT er es sofort aus. Fragt nicht "Soll ich?". Tut es und berichtet.
+
+HANDLUNGS-PROTOKOLL:
+1. PLAN: Zerbreche das Ziel in ≤3 Schritte. Intern. Kurz.
+2. AUSFÜHRUNG: Führe Schritt 1 sofort aus. Warte nicht auf weitere Erlaubnis.
+3. BEOBACHTUNG: Prüfe das Ergebnis. Bei Fehler → selbst korrigieren (max. 3 Versuche).
+4. BERICHT: Zeige dem User das Resultat, nicht den Prozess. Nur bei Fehlschlag zeige Diagnose.
+"""
+
 import os
+import sys
 import json
 import subprocess
 import sqlite3
 import glob
 import re
-import requests
+import hashlib
+import base64
+import shutil
 from datetime import datetime
+from pathlib import Path
+
+# Import FRED modules for deep integration
+try:
+    from fred_db import FredDB
+    from fred_vault import get_entry, vault_exists
+    from fred_accounts import get_current_profile
+except ImportError:
+    pass
 
 # ============================================
-# FRED AGENT v2.0 - OpenClaw-Style
+# KONFIGURATION
 # ============================================
-
-# --- Konfiguration ---
 HOME = os.path.expanduser("~")
-FRED_DIR = os.path.join(HOME, "fred")
-CONFIG_FILE = os.path.join(FRED_DIR, "fred_config.json")
-MEMORY_DB = os.path.join(FRED_DIR, "fred_memory.db")
+WORKSPACE = os.getcwd()
+FRED_DIR = os.path.join(HOME, ".fred")
+CONFIG_FILE = os.path.join(FRED_DIR, "agent_config.json")
+MEMORY_DB = os.path.join(FRED_DIR, "agent_memory.db")
 SKILLS_DIR = os.path.join(FRED_DIR, "skills")
-LOG_FILE = os.path.join(FRED_DIR, "fred.log")
-MODEL = "llama3"
+LOG_FILE = os.path.join(FRED_DIR, "agent.log")
+
+# LLM Configuration
+MODEL = os.environ.get("FRED_MODEL", "llama3")
+MAX_STEPS = int(os.environ.get("FRED_MAX_STEPS", "7"))
+AUTO_EXECUTE = True  # Autonom ohne Rückfrage
+
+# Dangerous patterns - BLOCKED
+DANGEROUS_PATTERNS = [
+    "rm -rf /", "mkfs", "dd if=", ":(){:", "chmod -R 777 /",
+    "shutdown", "reboot", "init 0", "init 6", "wipefs",
+    "curl.*\\|.*sh", "wget.*\\|.*bash", "> /dev/sda"
+]
 
 # --- Logging ---
 def log(msg):
@@ -228,16 +266,259 @@ def system_info():
     parts.append("---")
     parts.append(run_shell("free -h | grep Mem"))
     parts.append("---")
-    parts.append(run_shell("uptime -p"))
+    parts.append(run_shell("uptime -p 2>/dev/null || uptime"))
     return "\n".join(parts)
 
-# Skill-Registry
+# ============================================
+# NEUE SKILL HELPER FUNKTIONEN
+# ============================================
+def append_file(path, content):
+    path = os.path.expanduser(path)
+    try:
+        with open(path, "a") as f:
+            f.write(content)
+        return f"✅ Angehängt an: {path} ({len(content)} Zeichen)"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def delete_file(path):
+    path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        return f"❌ Datei nicht gefunden: {path}"
+    if os.path.isdir(path):
+        return f"❌ Ist ein Verzeichnis, verwende rmdir oder rm -r"
+    try:
+        os.remove(path)
+        return f"✅ Gelöscht: {path}"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def copy_file(src, dst):
+    src = os.path.expanduser(src)
+    dst = os.path.expanduser(dst)
+    try:
+        shutil.copy2(src, dst)
+        return f"✅ Kopiert: {src} → {dst}"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def move_file(src, dst):
+    src = os.path.expanduser(src)
+    dst = os.path.expanduser(dst)
+    try:
+        shutil.move(src, dst)
+        return f"✅ Verschoben: {src} → {dst}"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def list_directory(path="."):
+    path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        return f"❌ Verzeichnis nicht gefunden: {path}"
+    try:
+        entries = os.listdir(path)
+        dirs = [d for d in entries if os.path.isdir(os.path.join(path, d))]
+        files = [f for f in entries if os.path.isfile(os.path.join(path, f))]
+        result = [f"📁 {len(dirs)} Verzeichnisse, 📄 {len(files)} Dateien"]
+        if dirs:
+            result.append("\nVerzeichnisse:")
+            result.extend([f"  📂 {d}" for d in sorted(dirs)[:20]])
+        if files:
+            result.append("\nDateien:")
+            result.extend([f"  📄 {f}" for f in sorted(files)[:20]])
+        if len(dirs) > 20 or len(files) > 20:
+            result.append(f"\n... (gekürzt, insgesamt {len(entries)} Einträge)")
+        return "\n".join(result)
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def create_directory(path):
+    path = os.path.expanduser(path)
+    try:
+        os.makedirs(path, exist_ok=True)
+        return f"✅ Erstellt: {path}"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def run_python_code(code, timeout=10):
+    try:
+        result = subprocess.run(
+            ["python3", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=WORKSPACE
+        )
+        output = (result.stdout + result.stderr).strip()
+        return output[:3000] if output else "✅ Ausgeführt (kein Output)"
+    except subprocess.TimeoutExpired:
+        return f"⏰ Timeout nach {timeout}s"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def run_script(path, args=None):
+    path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        return f"❌ Skript nicht gefunden: {path}"
+    cmd = [path] + (args or [])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=WORKSPACE)
+        output = (result.stdout + result.stderr).strip()
+        return output[:3000] if output else "✅ Ausgeführt"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def install_package(name, manager="pip"):
+    managers = {
+        "pip": f"pip install --quiet {name}",
+        "pip3": f"pip3 install --quiet {name}",
+        "npm": f"npm install -g {name}",
+        "apt": f"apt-get install -y {name}",
+        "brew": f"brew install {name}"
+    }
+    cmd = managers.get(manager, f"{manager} install {name}")
+    return run_shell(cmd, timeout=120)
+
+def fetch_json(url, method="GET", data=None):
+    try:
+        import requests
+        headers = {"User-Agent": "Fred-Agent/3.0", "Accept": "application/json"}
+        if method.upper() == "GET":
+            resp = requests.get(url, timeout=15, headers=headers)
+        elif method.upper() == "POST":
+            resp = requests.post(url, json=data, timeout=15, headers=headers)
+        else:
+            return f"❌ Methode {method} nicht unterstützt"
+        resp.raise_for_status()
+        return json.dumps(resp.json(), indent=2, ensure_ascii=False)[:4000]
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def scan_ports(host, ports=None):
+    if ports is None:
+        ports = [22, 80, 443, 8080, 3306, 5432]
+    results = []
+    for port in ports:
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            status = "🟢 OFFEN" if result == 0 else "🔴 geschlossen"
+            results.append(f"  Port {port}: {status}")
+        except Exception as e:
+            results.append(f"  Port {port}: ❌ {e}")
+    return f"Port Scan für {host}:\n" + "\n".join(results)
+
+# Vault Integration
+def get_vault_key(service, password):
+    if not service or not password:
+        return "❌ Service und Passwort erforderlich"
+    try:
+        from fred_vault import get_entry
+        entry = get_entry(password, service)
+        if entry:
+            key = entry.get("key", "")[:10] + "..." if len(entry.get("key", "")) > 10 else entry.get("key", "")
+            return f"✅ API-Key für {service}: {key} (im Memory gespeichert)"
+        return f"❌ Kein Eintrag für {service}"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def list_vault_services(password):
+    if not password:
+        return "❌ Passwort erforderlich"
+    try:
+        from fred_vault import list_entries
+        entries = list_entries(password)
+        if entries:
+            return f"Vault Services:\n" + "\n".join([f"  - {e}" for e in entries])
+        return "Keine Einträge oder falsches Passwort"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+# Profile Integration
+def switch_profile_cmd(name):
+    if not name:
+        return "❌ Profilname erforderlich"
+    try:
+        from fred_accounts import switch_profile
+        if switch_profile(name):
+            return f"✅ Gewechselt zu Profil: {name}"
+        return f"❌ Profil {name} nicht gefunden"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+# Memory Search
+def search_memory(query):
+    conn = sqlite3.connect(MEMORY_DB)
+    rows = conn.execute(
+        "SELECT key, value FROM facts WHERE key LIKE ? OR value LIKE ?",
+        (f"%{query}%", f"%{query}%")
+    ).fetchall()
+    conn.close()
+    if rows:
+        return "\n".join([f"  {r[0]}: {r[1]}" for r in rows[:20]])
+    return f"Keine Treffer für '{query}'"
+
+# FRED Integration
+def fred_quick_chat(message):
+    try:
+        from fred_chat import quick_ask
+        return quick_ask(message)[:2000]
+    except ImportError:
+        return "❌ fred_chat Modul nicht verfügbar"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def fred_get_notes(query=""):
+    try:
+        with open("fred_notes.json", "r") as f:
+            notes = json.load(f)
+        if query:
+            filtered = [n for n in notes if query.lower() in n.get("content", "").lower()]
+            notes = filtered
+        if notes:
+            return f"Notizen ({len(notes)}):\n" + "\n---\n".join([json.dumps(n, indent=2) for n in notes[:5]])
+        return "Keine Notizen gefunden"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+def fred_list_projects():
+    try:
+        from fred_projects import list_projects
+        projects = list_projects()
+        if projects:
+            return "Projekte:\n" + "\n".join([f"  - {p.get('name', 'unnamed')}: {p.get('status', 'unknown')}" for p in projects])
+        return "Keine Projekte"
+    except Exception as e:
+        return f"❌ Fehler: {e}"
+
+# Skill-Registry - ERWEITERT für v3.0
 SKILLS = {
+    # === SYSTEM & SHELL ===
     "shell": {
         "func": lambda p: run_shell(p["command"], p.get("timeout", 30)),
-        "desc": "Shell-Befehl ausführen",
+        "desc": "Shell-Befehl ausführen (sicherheitsgeprüft)",
         "params": "command, timeout(optional)"
     },
+    "sysinfo": {
+        "func": lambda p: system_info(),
+        "desc": "Systeminformationen (CPU, RAM, Disk, Uptime)",
+        "params": "(keine)"
+    },
+    "process_list": {
+        "func": lambda p: run_shell("ps aux | head -20"),
+        "desc": "Laufende Prozesse anzeigen",
+        "params": "(keine)"
+    },
+    "kill_process": {
+        "func": lambda p: run_shell(f"kill {p.get('signal', '-15')} {p['pid']}"),
+        "desc": "Prozess beenden",
+        "params": "pid, signal(optional)"
+    },
+    
+    # === DATEIOPERATIONEN ===
     "read_file": {
         "func": lambda p: read_file(p["path"]),
         "desc": "Datei lesen",
@@ -248,19 +529,129 @@ SKILLS = {
         "desc": "Datei schreiben",
         "params": "path, content"
     },
+    "append_file": {
+        "func": lambda p: append_file(p["path"], p["content"]),
+        "desc": "An Datei anhängen",
+        "params": "path, content"
+    },
+    "delete_file": {
+        "func": lambda p: delete_file(p["path"]),
+        "desc": "Datei löschen",
+        "params": "path"
+    },
+    "copy_file": {
+        "func": lambda p: copy_file(p["src"], p["dst"]),
+        "desc": "Datei kopieren",
+        "params": "src, dst"
+    },
+    "move_file": {
+        "func": lambda p: move_file(p["src"], p["dst"]),
+        "desc": "Datei verschieben",
+        "params": "src, dst"
+    },
     "find_files": {
         "func": lambda p: find_files(p["pattern"], p.get("directory", "~")),
-        "desc": "Dateien suchen",
+        "desc": "Dateien suchen (glob pattern)",
         "params": "pattern, directory(optional)"
     },
+    "list_dir": {
+        "func": lambda p: list_directory(p.get("path", ".")),
+        "desc": "Verzeichnisinhalt auflisten",
+        "params": "path(optional)"
+    },
+    "create_dir": {
+        "func": lambda p: create_directory(p["path"]),
+        "desc": "Verzeichnis erstellen",
+        "params": "path"
+    },
+    "tree": {
+        "func": lambda p: run_shell(f"tree -L {p.get('level', 2)} {p.get('path', '.')}", 10),
+        "desc": "Verzeichnisbaum anzeigen",
+        "params": "path(optional), level(optional)"
+    },
+    
+    # === CODE & DEVELOPMENT ===
+    "run_python": {
+        "func": lambda p: run_python_code(p["code"], p.get("timeout", 10)),
+        "desc": "Python-Code ausführen (Sandbox)",
+        "params": "code, timeout(optional)"
+    },
+    "run_script": {
+        "func": lambda p: run_script(p["path"], p.get("args", [])),
+        "desc": "Skript ausführen",
+        "params": "path, args(optional)"
+    },
+    "git_status": {
+        "func": lambda p: run_shell("git status", 10),
+        "desc": "Git Status im aktuellen Verzeichnis",
+        "params": "(keine)"
+    },
+    "git_diff": {
+        "func": lambda p: run_shell(f"git diff {p.get('file', '')}", 10),
+        "desc": "Git Diff anzeigen",
+        "params": "file(optional)"
+    },
+    "install_package": {
+        "func": lambda p: install_package(p["name"], p.get("manager", "pip")),
+        "desc": "Paket installieren (pip/npm/apt)",
+        "params": "name, manager(optional)"
+    },
+    
+    # === NETZWERK & WEB ===
     "web": {
         "func": lambda p: fetch_web(p["url"]),
-        "desc": "Webseite lesen",
+        "desc": "Webseite lesen (HTML zu Text)",
         "params": "url"
     },
+    "web_json": {
+        "func": lambda p: fetch_json(p["url"], p.get("method", "GET"), p.get("data", {})),
+        "desc": "API-Aufruf (JSON)",
+        "params": "url, method(optional), data(optional)"
+    },
+    "port_scan": {
+        "func": lambda p: scan_ports(p.get("host", "localhost"), p.get("ports", [22, 80, 443])),
+        "desc": "Ports scannen",
+        "params": "host(optional), ports(optional)"
+    },
+    "ping": {
+        "func": lambda p: run_shell(f"ping -c 4 {p['host']}", 10),
+        "desc": "Host pingen",
+        "params": "host"
+    },
+    "dns_lookup": {
+        "func": lambda p: run_shell(f"nslookup {p['host']}", 10),
+        "desc": "DNS Lookup",
+        "params": "host"
+    },
+    
+    # === VAULT & SECRETS ===
+    "vault_get": {
+        "func": lambda p: get_vault_key(p.get("service"), p.get("password")),
+        "desc": "API-Key aus Vault holen",
+        "params": "service, password"
+    },
+    "vault_list": {
+        "func": lambda p: list_vault_services(p.get("password")),
+        "desc": "Vault Services auflisten",
+        "params": "password"
+    },
+    
+    # === PROFIL & KONTEXT ===
+    "profile_current": {
+        "func": lambda p: f"Aktives Profil: {get_current_profile()}" if get_current_profile else "Profile module not available",
+        "desc": "Aktuelles Profil anzeigen",
+        "params": "(keine)"
+    },
+    "profile_switch": {
+        "func": lambda p: switch_profile_cmd(p["name"]),
+        "desc": "Profil wechseln",
+        "params": "name"
+    },
+    
+    # === GEDAECHTNIS & TASKS ===
     "remember": {
         "func": lambda p: (Memory.set_fact(p["key"], p["value"]), f"✅ Gemerkt: {p['key']}")[1],
-        "desc": "Information merken",
+        "desc": "Information merken (persistent)",
         "params": "key, value"
     },
     "recall": {
@@ -272,6 +663,11 @@ SKILLS = {
         "func": lambda p: json.dumps(Memory.all_facts(), indent=2, ensure_ascii=False) or "Leer.",
         "desc": "Alle gespeicherten Infos",
         "params": "(keine)"
+    },
+    "forget": {
+        "func": lambda p: (Memory.forget_fact(p["key"]), f"✅ Gelöscht: {p['key']}")[1] if hasattr(Memory, 'forget_fact') else "Nicht unterstützt",
+        "desc": "Information vergessen",
+        "params": "key"
     },
     "add_task": {
         "func": lambda p: (Memory.add_task(p["text"], p.get("due")), f"✅ Aufgabe erstellt: {p['text']}")[1],
@@ -288,9 +684,26 @@ SKILLS = {
         "desc": "Aufgabe abschließen",
         "params": "id, result(optional)"
     },
-    "sysinfo": {
-        "func": lambda p: system_info(),
-        "desc": "Systeminformationen",
+    "search_memory": {
+        "func": lambda p: search_memory(p["query"]),
+        "desc": "Memory durchsuchen",
+        "params": "query"
+    },
+    
+    # === FRED INTEGRATION ===
+    "fred_chat": {
+        "func": lambda p: fred_quick_chat(p["message"]),
+        "desc": "FRED Chat System nutzen",
+        "params": "message"
+    },
+    "fred_notes": {
+        "func": lambda p: fred_get_notes(p.get("query", "")),
+        "desc": "Notizen durchsuchen",
+        "params": "query(optional)"
+    },
+    "fred_projects": {
+        "func": lambda p: fred_list_projects(),
+        "desc": "Projekte auflisten",
         "params": "(keine)"
     }
 }
@@ -427,19 +840,25 @@ def clean_response(text):
 # ============================================
 def print_banner():
     print()
-    print("╔══════════════════════════════════════════╗")
-    print("║     🤖 FRED AGENT v2.0                  ║")
-    print("║     Autonomer KI-Assistent               ║")
-    print("╠══════════════════════════════════════════╣")
-    print("║  Befehle:                                ║")
-    print("║    exit    - Beenden                     ║")
-    print("║    key     - API Key setzen              ║")
-    print("║    skills  - Alle Skills anzeigen        ║")
-    print("║    tasks   - Aufgaben anzeigen           ║")
-    print("║    facts   - Gespeicherte Infos          ║")
-    print("║    log     - Letzte Aktionen             ║")
-    print("║    clear   - Chat-Verlauf loeschen       ║")
-    print("╚══════════════════════════════════════════╝")
+    print("╔══════════════════════════════════════════════════════╗")
+    print("║     🤖 FRED AGENT v3.0 - Autonomer System-Agent      ║")
+    print("╠══════════════════════════════════════════════════════╣")
+    print(f"║  📡 Modell: {MODEL:<28} ║")
+    print(f"║  🔧 Skills: {len(SKILLS):<29} ║")
+    print(f"║  🚀 Max Steps: {MAX_STEPS:<26} ║")
+    print("╠══════════════════════════════════════════════════════╣")
+    print("║  Befehle:                                            ║")
+    print("║    exit      - Beenden                               ║")
+    print("║    key       - API Key setzen                        ║")
+    print("║    skills    - Alle Skills anzeigen                  ║")
+    print("║    tasks     - Aufgaben anzeigen                     ║")
+    print("║    facts     - Gespeicherte Infos                    ║")
+    print("║    log       - Letzte Aktionen                       ║")
+    print("║    clear     - Chat-Verlauf löschen                  ║")
+    print("║    sysinfo   - Systeminformationen                   ║")
+    print("║    profile   - Aktuelles Profil                      ║")
+    print("║    vault     - Vault Services                        ║")
+    print("╚══════════════════════════════════════════════════════╝")
     print()
 
 def cmd_set_key():
@@ -489,6 +908,30 @@ def cmd_log():
         print(f"   [{r[0][:16]}] {r[1]}: {r[3][:80]}")
     print()
 
+def cmd_sysinfo():
+    print(system_info())
+    print()
+
+def cmd_profile():
+    try:
+        from fred_accounts import get_current_profile
+        profile = get_current_profile()
+        print(f"\n👤 Aktuelles Profil: {profile}\n")
+    except ImportError:
+        print("\n❌ Profile module not available\n")
+
+def cmd_vault():
+    try:
+        from fred_vault import vault_exists
+        if vault_exists():
+            pwd = input("   Master Passwort: ").strip()
+            if pwd:
+                list_vault_services(pwd)
+        else:
+            print("\n⚠️  Vault nicht initialisiert. Nutze 'key' im Hauptmenü.\n")
+    except ImportError:
+        print("\n❌ Vault module not available\n")
+
 def agent_main(db_path=None):
     init_db()
     print_banner()
@@ -498,7 +941,7 @@ def agent_main(db_path=None):
         print("⚠️  Kein API Key! Tippe 'key' oder starte lokales Ollama.\n")
 
     session = datetime.now().strftime("%Y%m%d_%H%M%S")
-    max_steps = 5  # Max autonome Schritte pro Anfrage
+    max_steps = MAX_STEPS  # Max autonome Schritte pro Anfrage
 
     while True:
         try:
@@ -535,6 +978,15 @@ def agent_main(db_path=None):
             conn.commit()
             conn.close()
             print("🗑️  Chat-Verlauf gelöscht.\n")
+            continue
+        elif low == "sysinfo":
+            cmd_sysinfo()
+            continue
+        elif low == "profile":
+            cmd_profile()
+            continue
+        elif low == "vault":
+            cmd_vault()
             continue
 
         # Nachricht speichern
