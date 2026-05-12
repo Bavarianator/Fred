@@ -1,11 +1,1 @@
-__pycache__/
-*.pyc
-venv/
-*.db
-fred.db
-fred_memory.db
-config.json
-fred_config.json
-*.log
-logs/
-skills/
+Nothing should be ignored based on the provided file changes. The only modified file is `fred_cloud.py`, which is a source code file and should not be added to .gitignore.
