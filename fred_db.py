@@ -98,6 +98,39 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    # Profile management table
+    c.execute('''CREATE TABLE IF NOT EXISTS profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        description TEXT DEFAULT '',
+        settings TEXT DEFAULT '{}',
+        vault_enabled INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    # Vault entries table (metadata only, actual keys stored encrypted in file)
+    c.execute('''CREATE TABLE IF NOT EXISTS vault_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER,
+        service_name TEXT,
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )''')
+
+    # Remote tokens table
+    c.execute('''CREATE TABLE IF NOT EXISTS remote_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_hash TEXT UNIQUE,
+        client_name TEXT,
+        expires_at TIMESTAMP,
+        last_used TIMESTAMP,
+        active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
     # Standard-Provider anlegen
     defaults = [
         ('OpenAI', 'https://api.openai.com/v1', '', 'gpt-4o-mini'),

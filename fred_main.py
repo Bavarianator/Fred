@@ -80,6 +80,11 @@ def main():
         print(f"  {YELLOW}8{R}  🤖 AI Coder")
         print()
         
+        # Profiles & Vault Section
+        print(f"  {CYAN}{BOLD}── Profiles & Vault ──{R}")
+        print(f"  {YELLOW}P{R}  👤 Profiles / Vault Management")
+        print()
+        
         # System Section
         print(f"  {CYAN}{BOLD}── System ──{R}")
         print(f"  {YELLOW}9{R}  ⚙️  Settings / Einstellungen")
@@ -143,6 +148,10 @@ def main():
             except Exception as e:
                 print(f"  {RED}❌ {e}{R}")
                 input(f"\n  {DIM}Enter...{R}")
+
+        # ── Profiles & Vault ──
+        elif choice == "p":
+            _run_profiles_vault_menu()
 
         # ── System ──
         elif choice == "9":
@@ -213,6 +222,160 @@ def _run_submenu_notes():
             except Exception as e:
                 print(f"  {RED}❌ {e}{R}")
                 input(f"\n  {DIM}Enter...{R}")
+        elif c == "0":
+            break
+
+
+def _run_profiles_vault_menu():
+    """Profiles & Vault Management Untermenü"""
+    try:
+        from fred_accounts import (
+            list_profiles, get_current_profile, create_profile,
+            switch_profile, delete_profile, get_profile
+        )
+        from fred_vault import (
+            vault_exists, init_vault, list_entries, save_entry,
+            get_entry, delete_entry
+        )
+    except ImportError as e:
+        print(f"  {RED}❌ Module not found: {e}{R}")
+        input(f"\n  {DIM}Enter...{R}")
+        return
+    
+    while True:
+        clear()
+        current = get_current_profile()
+        print(f"\n{CYAN}{BOLD}  👤 Profiles & Vault Management{R}")
+        print(f"  {DIM}Current Profile: {current}{R}\n")
+        
+        print(f"  {CYAN}{BOLD}── Profiles ──{R}")
+        print(f"  {YELLOW}1{R}  List Profiles")
+        print(f"  {YELLOW}2{R}  Create New Profile")
+        print(f"  {YELLOW}3{R}  Switch Profile")
+        print(f"  {YELLOW}4{R}  Delete Profile")
+        print()
+        print(f"  {CYAN}{BOLD}── Vault ──{R}")
+        print(f"  {YELLOW}5{R}  Initialize Vault")
+        print(f"  {YELLOW}6{R}  List Vault Entries")
+        print(f"  {YELLOW}7{R}  Add Vault Entry")
+        print(f"  {YELLOW}8{R}  Delete Vault Entry")
+        print()
+        print(f"  {YELLOW}0{R}  ← Back to Main Menu")
+        
+        c = input(f"\n  {CYAN}▸{R} ").strip().lower()
+        
+        if c == "1":
+            # List Profiles
+            clear()
+            print(f"\n{CYAN}{BOLD}  Available Profiles:{R}\n")
+            for p in list_profiles():
+                prof = get_profile(p)
+                marker = "👉" if p == current else "  "
+                desc = prof.get("description", "") if prof else ""
+                print(f"  {marker} {p}: {desc}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "2":
+            # Create Profile
+            clear()
+            print(f"\n{CYAN}{BOLD}  Create New Profile{R}\n")
+            name = input(f"  Profile name: ").strip().lower()
+            if name:
+                desc = input(f"  Description: ").strip()
+                if create_profile(name, desc):
+                    print(f"  {GREEN}✓ Profile '{name}' created!{R}")
+                else:
+                    print(f"  {RED}✗ Profile already exists!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "3":
+            # Switch Profile
+            clear()
+            print(f"\n{CYAN}{BOLD}  Switch Profile{R}\n")
+            print(f"  Current: {current}")
+            print(f"  Available: {', '.join(list_profiles())}")
+            new_prof = input(f"  Switch to: ").strip().lower()
+            if new_prof and new_prof != current:
+                if switch_profile(new_prof):
+                    print(f"  {GREEN}✓ Switched to '{new_prof}'!{R}")
+                else:
+                    print(f"  {RED}✗ Profile not found!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "4":
+            # Delete Profile
+            clear()
+            print(f"\n{CYAN}{BOLD}  Delete Profile{R}\n")
+            name = input(f"  Profile to delete: ").strip().lower()
+            if name:
+                if delete_profile(name):
+                    print(f"  {GREEN}✓ Profile '{name}' deleted!{R}")
+                else:
+                    print(f"  {RED}✗ Cannot delete default or current profile!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "5":
+            # Initialize Vault
+            clear()
+            print(f"\n{CYAN}{BOLD}  Initialize Vault{R}\n")
+            if vault_exists():
+                print(f"  {YELLOW}Vault already exists!{R}")
+            else:
+                pwd = input(f"  Enter master password: ").strip()
+                if pwd and len(pwd) >= 4:
+                    if init_vault(pwd):
+                        print(f"  {GREEN}✓ Vault initialized!{R}")
+                    else:
+                        print(f"  {RED}✗ Failed to initialize vault!{R}")
+                else:
+                    print(f"  {RED}✗ Password too short (min 4 chars)!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "6":
+            # List Vault Entries
+            clear()
+            print(f"\n{CYAN}{BOLD}  Vault Entries{R}\n")
+            pwd = input(f"  Enter master password: ").strip()
+            if pwd:
+                entries = list_entries(pwd)
+                if entries:
+                    print(f"\n  Stored services:")
+                    for svc in entries:
+                        print(f"    - {svc}")
+                else:
+                    print(f"  {YELLOW}No entries found or wrong password.{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "7":
+            # Add Vault Entry
+            clear()
+            print(f"\n{CYAN}{BOLD}  Add Vault Entry{R}\n")
+            pwd = input(f"  Enter master password: ").strip()
+            if pwd:
+                service = input(f"  Service name: ").strip()
+                if service:
+                    api_key = input(f"  API Key: ").strip()
+                    desc = input(f"  Description (optional): ").strip()
+                    if save_entry(pwd, service, api_key, desc):
+                        print(f"  {GREEN}✓ Entry saved!{R}")
+                    else:
+                        print(f"  {RED}✗ Failed to save (vault not initialized?)!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
+        elif c == "8":
+            # Delete Vault Entry
+            clear()
+            print(f"\n{CYAN}{BOLD}  Delete Vault Entry{R}\n")
+            pwd = input(f"  Enter master password: ").strip()
+            if pwd:
+                service = input(f"  Service to delete: ").strip()
+                if service:
+                    if delete_entry(pwd, service):
+                        print(f"  {GREEN}✓ Entry deleted!{R}")
+                    else:
+                        print(f"  {RED}✗ Entry not found!{R}")
+            input(f"\n  {DIM}Enter to continue...{R}")
+        
         elif c == "0":
             break
 
