@@ -1,1 +1,4 @@
-(fred_accounts.py, fred_vault.py)
+```
+__pycache__/
+*.pyc
+```
