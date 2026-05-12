@@ -1,10 +1,24 @@
 """
-FRED v5.0 - Hauptmenü
+FRED v5.0 - Main Menu / Hauptmenü
+Unites: Chat System, Tools, Settings
 Vereint: Chat-System, Tools, Einstellungen
 """
 
 import os
 import sys
+
+# Import language module / Sprachmodul importieren
+try:
+    from fred_lang import t, lang
+except ImportError:
+    # Fallback if module doesn't exist yet
+    def t(key, **kwargs):
+        return f"[{key}]"
+    class FakeLang:
+        current_lang = "de"
+        def get_current_code(self): return "de"
+        def set_language(self, l): pass
+    lang = FakeLang()
 
 CYAN = "\033[96m"
 YELLOW = "\033[93m"
@@ -33,7 +47,7 @@ def banner():
 
 
 def show_provider():
-    """Zeigt aktuellen Provider in Statuszeile"""
+    """Shows current provider in status line / Zeigt aktuellen Provider in Statuszeile"""
     try:
         from fred_settings import get_provider, get_model, PROVIDERS
         p = get_provider()
@@ -41,7 +55,7 @@ def show_provider():
         name = PROVIDERS.get(p, {}).get("name", p)
         print(f"  {DIM}📡 {name} / {m}{R}\n")
     except:
-        print(f"  {DIM}📡 Nicht konfiguriert{R}\n")
+        print(f"  {DIM}📡 Not configured / Nicht konfiguriert{R}\n")
 
 
 def main():
@@ -50,24 +64,36 @@ def main():
         banner()
         show_provider()
 
-        print(f"  {CYAN}{BOLD}── AI Chat ──{R}")
-        print(f"  {YELLOW}1{R}  💬 Neuer Chat")
-        print(f"  {YELLOW}2{R}  📚 Chat-Verlauf")
-        print(f"  {YELLOW}3{R}  ⚡ Schnelle Frage")
+        # AI Chat Section
+        print(f"  {CYAN}{BOLD}── {t('menu_chat').split('. ')[1] if '. ' in t('menu_chat') else 'AI Chat'} ──{R}")
+        print(f"  {YELLOW}1{R}  💬 {t('menu_chat').split('. ')[1] if '. ' in t('menu_chat') else 'New Chat'}")
+        print(f"  {YELLOW}2{R}  📚 Chat History / Chat-Verlauf")
+        print(f"  {YELLOW}3{R}  ⚡ Quick Question / Schnelle Frage")
         print()
+        
+        # Tools Section
         print(f"  {CYAN}{BOLD}── Tools ──{R}")
-        print(f"  {YELLOW}4{R}  📁 Datei-Manager")
-        print(f"  {YELLOW}5{R}  🌐 Netzwerk-Tools")
-        print(f"  {YELLOW}6{R}  🖥  System-Tools")
-        print(f"  {YELLOW}7{R}  📝 Notizen & Projekte")
+        print(f"  {YELLOW}4{R}  📁 File Manager / Datei-Manager")
+        print(f"  {YELLOW}5{R}  🌐 Network Tools / Netzwerk-Tools")
+        print(f"  {YELLOW}6{R}  🖥  System Tools / System-Tools")
+        print(f"  {YELLOW}7{R}  📝 Notes & Projects / Notizen & Projekte")
         print(f"  {YELLOW}8{R}  🤖 AI Coder")
         print()
+        
+        # System Section
         print(f"  {CYAN}{BOLD}── System ──{R}")
-        print(f"  {YELLOW}9{R}  ⚙️  Einstellungen")
-        print(f"  {YELLOW}0{R}  🚪 Beenden")
+        print(f"  {YELLOW}9{R}  ⚙️  Settings / Einstellungen")
+        print(f"  {YELLOW}L{R}  🌐 Language / Sprache ({lang.get_current_code().upper()})")
+        print(f"  {YELLOW}0{R}  🚪 {t('menu_exit').split('. ')[1] if '. ' in t('menu_exit') else 'Exit'}")
 
         print()
-        choice = input(f"  {CYAN}FRED ▸{R} ").strip()
+        choice = input(f"  {CYAN}FRED ▸{R} ").strip().lower()
+
+        # Language switch / Sprachumschaltung
+        if choice == "l":
+            new_lang = "en" if lang.get_current_code() == "de" else "de"
+            lang.set_language(new_lang)
+            continue
 
         # ── AI Chat ──
         if choice == "1":
@@ -112,7 +138,7 @@ def main():
                 from fred_coder import coder_menu
                 coder_menu()
             except ImportError:
-                print(f"  {RED}❌ fred_coder.py nicht gefunden{R}")
+                print(f"  {RED}❌ fred_coder.py not found / nicht gefunden{R}")
                 input(f"\n  {DIM}Enter...{R}")
             except Exception as e:
                 print(f"  {RED}❌ {e}{R}")
@@ -128,7 +154,7 @@ def main():
                 input(f"\n  {DIM}Enter...{R}")
 
         elif choice == "0":
-            print(f"\n  {CYAN}Bis bald! 👋{R}\n")
+            print(f"\n  {CYAN}Goodbye! / Auf Wiedersehen! 👋{R}\n")
             sys.exit(0)
 
 
