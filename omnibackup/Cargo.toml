@@ -1,0 +1,171 @@
+[package]
+name = "omnibackup"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["OmniBackup Team"]
+description = "Das ultimative Backup-Tool – simpler als Time Machine, mächtiger als Borg/Restic/Kopia"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/omnibackup/omnibackup"
+homepage = "https://omnibackup.dev"
+keywords = ["backup", "encryption", "deduplication", "cloud", "p2p"]
+categories = ["command-line-utilities", "filesystem"]
+
+[dependencies]
+# TUI & UI
+ratatui = "0.26"
+crossterm = "0.27"
+unicode-width = "0.1"
+
+# Async Runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+async-trait = "0.1"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+
+# Crypto
+age = "0.10"
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+zeroize = "1.7"
+
+# Hashing & Integrity
+blake3 = "1.5"
+merkle_light = "0.4"
+
+# Compression
+zstd = "0.13"
+
+# Chunking (FastCDC)
+fastcdc = "1.0"
+
+# P2P Networking
+libp2p = { version = "0.53", features = ["tcp", "quic", "noise", "kademlia", "mdns", "relay", "dns", "yamux"] }
+
+# Storage Backends
+opendal = { version = "0.45", features = ["services-s3", "services-gcs", "services-azblob", "services-webdav", "services-dropbox", "services-onedrive", "services-mega", "services-pcloud"] }
+aws-sdk-s3 = "1.10"
+azure_storage_blobs = "0.19"
+google-cloud-storage = "0.15"
+
+# FUSE Mounting
+fuser = "0.14"
+
+# Configuration
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+jsonschema = "0.17"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Logging & Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Notifications
+notify-rust = "4.10"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# File Watching
+notify = "6.1"
+
+# Cron Scheduling
+cron = "0.12"
+
+# System Info
+sysinfo = "0.30"
+
+# Internationalization
+fluent = "0.16"
+fluent-bundle = "0.15"
+unic-langid = "0.9"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+humantime = "2.1"
+
+# Bytes & IO
+bytes = "1.5"
+tokio-stream = "0.1"
+
+# URL Parsing
+url = "2.5"
+
+# Base64
+base64 = "0.21"
+
+# Hex encoding
+hex = "0.4"
+
+# Progress Bars (for CLI mode)
+indicatif = "0.17"
+
+# Human-readable sizes
+human-size = "0.5"
+
+# Network utilities
+socket2 = "0.5"
+
+# DNS resolution
+trust-dns-resolver = "0.23"
+
+# Reed-Solomon Erasure Coding
+reedsolomon-c = "0.1"
+
+# Dynamic Plugin Loading
+libloading = "0.8"
+
+# Keyring Integration (optional)
+keyring = { version = "2.3", optional = true }
+
+# YubiKey/FIDO2 Support (optional)
+yubikey = { version = "0.7", optional = true }
+
+[dev-dependencies]
+tempfile = "3.9"
+mockall = "0.12"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+
+[build-dependencies]
+vergen = { version = "8.3", features = ["git", "cargo", "rustc"] }
+
+[[bin]]
+name = "omnibackup"
+path = "src/main.rs"
+
+[features]
+default = ["keyring"]
+keyring = ["dep:keyring"]
+yubikey = ["dep:yubikey"]
+perftest = []
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+debug = 2
+
+[[bench]]
+name = "chunker_bench"
+harness = false
+
+[[bench]]
+name = "crypto_bench"
+harness = false
+
+[workspace]
+members = [".", "plugins/example-backend"]
