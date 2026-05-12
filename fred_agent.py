@@ -51,6 +51,60 @@ MODEL = os.environ.get("FRED_MODEL", "llama3")
 MAX_STEPS = int(os.environ.get("FRED_MAX_STEPS", "7"))
 AUTO_EXECUTE = True  # Autonom ohne Rückfrage
 
+# Mammouth AI API Configuration
+MAMMOUTH_API_BASE = "https://api.mammouth.ai/v1"
+MAMMOUTH_MODELS = {
+    "gpt-5.5": {"input": 5.0, "output": 30.0},
+    "gpt-5.4": {"input": 2.5, "output": 15.0},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.5},
+    "gpt-5.4-nano": {"input": 0.2, "output": 1.25},
+    "gpt-5.3-chat": {"input": 1.75, "output": 14.0},
+    "gpt-5.1": {"input": 1.25, "output": 10.0},
+    "mistral-large-3": {"input": 0.5, "output": 1.5},
+    "mistral-medium-3.1": {"input": 0.4, "output": 2.0},
+    "mistral-small-2603": {"input": 0.15, "output": 0.6},
+    "codestral-2508": {"input": 0.3, "output": 0.9},
+    "grok-4": {"input": 3.0, "output": 15.0},
+    "grok-4-fast": {"input": 0.2, "output": 0.5},
+    "grok-code-fast-1": {"input": 0.2, "output": 1.5},
+    "gemini-3.1-flash-lite-preview": {"input": 0.25, "output": 0.4},
+    "gemini-3.1-pro-preview": {"input": 2.5, "output": 15.0},
+    "glm-5.1": {"input": 1.05, "output": 3.5},
+    "deepseek-v4-flash": {"input": 0.14, "output": 0.28},
+    "deepseek-v4-pro": {"input": 1.74, "output": 3.48},
+    "kimi-k2.5": {"input": 0.6, "output": 3.0},
+    "qwen3.6-plus": {"input": 0.325, "output": 1.95},
+    "llama-4-maverick": {"input": 0.22, "output": 0.88},
+    "llama-4-scout": {"input": 0.15, "output": 0.6},
+    "claude-haiku-4-5": {"input": 0.8, "output": 4.0},
+    "claude-opus-4.7": {"input": 5.0, "output": 25.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+}
+# Aliases für einfache Modellauswahl
+MAMMOUTH_ALIASES = {
+    "gpt": "gpt-5.1",
+    "gpt4": "gpt-5.1",
+    "gpt5": "gpt-5.5",
+    "mistral": "mistral-medium-3.1",
+    "mistral-large": "mistral-large-3",
+    "mistral-small": "mistral-small-2603",
+    "codestral": "codestral-2508",
+    "grok": "grok-4-fast",
+    "grok-fast": "grok-4-fast",
+    "gemini": "gemini-3.1-flash-lite-preview",
+    "gemini-pro": "gemini-3.1-pro-preview",
+    "claude": "claude-sonnet-4-6",
+    "claude-haiku": "claude-haiku-4-5",
+    "claude-opus": "claude-opus-4.7",
+    "llama": "llama-4-scout",
+    "llama-maverick": "llama-4-maverick",
+    "deepseek": "deepseek-v4-flash",
+    "deepseek-pro": "deepseek-v4-pro",
+    "kimi": "kimi-k2.5",
+    "qwen": "qwen3.6-plus",
+    "glm": "glm-5.1",
+}
+
 # Dangerous patterns - BLOCKED
 DANGEROUS_PATTERNS = [
     "rm -rf /", "mkfs", "dd if=", ":(){:", "chmod -R 777 /",
@@ -84,6 +138,37 @@ def get_api_key():
     if key:
         return key
     return load_config().get("api_key", "")
+
+def get_mammouth_api_key():
+    """Holt Mammouth API Key aus Config oder Environment"""
+    key = os.environ.get("MAMMOUTH_API_KEY", "")
+    if key:
+        return key
+    cfg = load_config()
+    return cfg.get("mammouth_api_key", "")
+
+def set_mammouth_api_key(key):
+    """Speichert Mammouth API Key in Config"""
+    cfg = load_config()
+    cfg["mammouth_api_key"] = key
+    save_config(cfg)
+    return f"✅ Mammouth API Key gespeichert"
+
+def resolve_model(model_name):
+    """Löst Model-Alias zu echtem Modellnamen auf"""
+    model_lower = model_name.lower()
+    if model_lower in MAMMOUTH_ALIASES:
+        return MAMMOUTH_ALIASES[model_lower]
+    if model_lower in MAMMOUTH_MODELS:
+        return model_lower
+    return model_name  # Unbekanntes Modell, zurückgeben wie ist
+
+def get_model_pricing(model_name):
+    """Gibt Pricing-Info für ein Modell zurück"""
+    resolved = resolve_model(model_name)
+    if resolved in MAMMOUTH_MODELS:
+        return MAMMOUTH_MODELS[resolved]
+    return None
 
 # ============================================
 # GEDAECHTNIS (Persistentes Memory)
@@ -760,41 +845,77 @@ REGELN:
 {facts_text}
 {tasks_text}"""
 
-def call_ollama(messages):
+def call_ollama(messages, model=None):
+    """
+    Ruft LLM auf - unterstützt Ollama und Mammouth AI API
+    """
     api_key = get_api_key()
-
-    # Versuch 1: Ollama Cloud API
+    mammouth_key = get_mammouth_api_key()
+    use_model = model if model else MODEL
+    
+    # Versuch 1: Mammouth AI API (wenn Key vorhanden)
+    if mammouth_key:
+        try:
+            import requests
+            resolved_model = resolve_model(use_model)
+            resp = requests.post(
+                f"{MAMMOUTH_API_BASE}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {mammouth_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": resolved_model,
+                    "messages": messages,
+                    "stream": False
+                },
+                timeout=120
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+            elif resp.status_code == 401:
+                log("Mammouth API: Unauthorized - invalider API Key")
+            elif resp.status_code == 429:
+                log("Mammouth API: Rate limit exceeded")
+            elif resp.status_code >= 400:
+                log(f"Mammouth API Error: {resp.status_code} - {resp.text[:200]}")
+        except Exception as e:
+            log(f"Mammouth API Exception: {e}")
+    
+    # Versuch 2: Ollama Cloud API
     if api_key:
         try:
             from ollama import Client
             client = Client(host="https://api.ollama.com",
                           headers={"Authorization": f"Bearer {api_key}"})
-            resp = client.chat(MODEL, messages=messages)
+            resp = client.chat(use_model, messages=messages)
             return resp["message"]["content"]
         except:
             pass
-
-    # Versuch 2: Lokaler Ollama HTTP
+    
+    # Versuch 3: Lokaler Ollama HTTP
     try:
+        import requests
         resp = requests.post("http://localhost:11434/api/chat", json={
-            "model": MODEL, "messages": messages, "stream": False
+            "model": use_model, "messages": messages, "stream": False
         }, timeout=120)
         if resp.status_code == 200:
             return resp.json()["message"]["content"]
     except:
         pass
-
-    # Versuch 3: Ollama CLI
+    
+    # Versuch 4: Ollama CLI
     try:
         prompt = messages[-1]["content"]
-        r = subprocess.run(["ollama", "run", MODEL, prompt],
+        r = subprocess.run(["ollama", "run", use_model, prompt],
                           capture_output=True, text=True, timeout=120)
         if r.stdout.strip():
             return r.stdout.strip()
     except:
         pass
-
-    return "❌ Keine LLM-Verbindung! Starte Ollama mit 'ollama serve' oder setze API Key mit 'key'."
+    
+    return "❌ Keine LLM-Verbindung! Starte Ollama mit 'ollama serve' oder setze API Key mit 'key' oder 'mkey' für Mammouth."
 
 # ============================================
 # ACTION PARSER & EXECUTOR
@@ -850,6 +971,9 @@ def print_banner():
     print("║  Befehle:                                            ║")
     print("║    exit      - Beenden                               ║")
     print("║    key       - API Key setzen                        ║")
+    print("║    mkey      - Mammouth API Key setzen               ║")
+    print("║    models    - Verfügbare Modelle                    ║")
+    print("║    pricing   - Preisübersicht                        ║")
     print("║    skills    - Alle Skills anzeigen                  ║")
     print("║    tasks     - Aufgaben anzeigen                     ║")
     print("║    facts     - Gespeicherte Infos                    ║")
@@ -871,6 +995,43 @@ def cmd_set_key():
         print("   ✅ Gespeichert!\n")
     else:
         print("   Abgebrochen.\n")
+
+def cmd_set_mammouth_key():
+    print("\n🦣 Mammouth API Key eingeben (Enter = abbrechen):")
+    key = input("   > ").strip()
+    if key:
+        result = set_mammouth_api_key(key)
+        print(f"   {result}\n")
+    else:
+        print("   Abgebrochen.\n")
+
+def cmd_models():
+    print("\n🤖 Verfügbare Mammouth Modelle:")
+    print("   ═══════════════════════════════════════════════════════")
+    print("   Modell                      Input ($/M)   Output ($/M)")
+    print("   ═══════════════════════════════════════════════════════")
+    for model, pricing in MAMMOUTH_MODELS.items():
+        print(f"   {model:<28s} ${pricing['input']:<6.2f}      ${pricing['output']:<6.2f}")
+    print("   ═══════════════════════════════════════════════════════")
+    print("\n   Aliase: gpt, gpt4, gpt5, mistral, claude, llama, gemini, grok, deepseek, kimi, qwen, glm")
+    print()
+
+def cmd_pricing():
+    print("\n💰 Modell-Preise (Auszug):")
+    print("   ═══════════════════════════════════════════════════════")
+    budget = [("deepseek-v4-flash", 0.14, 0.28), ("llama-4-scout", 0.15, 0.6), ("mistral-small-2603", 0.15, 0.6)]
+    mid = [("llama-4-maverick", 0.22, 0.88), ("gemini-3.1-flash-lite-preview", 0.25, 0.4), ("gpt-5.4-nano", 0.2, 1.25)]
+    premium = [("gpt-5.5", 5.0, 30.0), ("claude-opus-4.7", 5.0, 25.0), ("grok-4", 3.0, 15.0)]
+    print("   BUDGET (< $0.30/M):")
+    for m, i, o in budget:
+        print(f"     • {m}: ${i}/M input, ${o}/M output")
+    print("   MID-RANGE ($0.30-$1/M):")
+    for m, i, o in mid:
+        print(f"     • {m}: ${i}/M input, ${o}/M output")
+    print("   PREMIUM (> $1/M):")
+    for m, i, o in premium:
+        print(f"     • {m}: ${i}/M input, ${o}/M output")
+    print()
 
 def cmd_skills():
     print("\n📦 Skills:")
@@ -959,6 +1120,15 @@ def agent_main(db_path=None):
             break
         elif low == "key":
             cmd_set_key()
+            continue
+        elif low == "mkey":
+            cmd_set_mammouth_key()
+            continue
+        elif low == "models":
+            cmd_models()
+            continue
+        elif low == "pricing":
+            cmd_pricing()
             continue
         elif low == "skills":
             cmd_skills()
